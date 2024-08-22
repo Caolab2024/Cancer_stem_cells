@@ -1,0 +1,220 @@
+
+library(data.table)
+library(tibble)
+library(survival)
+id <- list.files(path = "D:\\科研\\gliomas_prol\\9.建模与验证",pattern = "csv")
+id <- id[-1]
+cohort <- list()
+for (i in 1:length(id)) {cohort[[i]] <- fread(id[i],header = T,data.table = F)
+cohort[[i]]  <-na.omit( column_to_rownames(cohort[[i]] ,var = colnames(cohort[[i]] )[1]))
+print(max(cohort[[i]][,3:ncol(cohort[[i]])]))
+}
+names(cohort) <- as.character(lapply(strsplit(id,"[.]"),function(i){i <- i[1]}))
+cohort <- cohort[6:1]
+names(cohort)[1] <- "train_set"
+
+
+
+
+##########################
+source("机器学习函数.R")
+id <-prol$id
+########VSOLassoBag(CEP)
+library(SummarizedExperiment)
+library("VSOLassoBag")
+trainset <- na.omit(cohort$train_set [,c("futime","fustat",id)])
+colData <- DataFrame(futime=trainset$futime,
+                     fustat=trainset$ fustat,
+                     row.names=rownames(trainset))
+se0 <- SummarizedExperiment(assays=SimpleList(counts=t(trainset [,-c(1,2)])),
+                            colData=colData)
+fit <- VSOLassoBag(se0, c("futime","fustat"), bootN=10,
+                   a.family="cox", bagFreq.sigMethod="CEP", do.plot = T,
+                   plot.freq = "not")
+key_gene <-  fit$results$variable
+key_gene
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_VSOLassoBa_CEP <- mlr(cohort)
+all_VSOLassoBa_CEP$algorithm <- paste("VSOLassoBag (CEP) +",all_VSOLassoBa_CEP$algorithm)
+save.image("VSOLassoBag (CEP).rdata")
+
+#############VSOLassoBag(PST)
+library(SummarizedExperiment)
+library("VSOLassoBag")
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+colData <- DataFrame(futime=trainset$futime,
+                     fustat=trainset$ fustat,
+                     row.names=rownames(trainset))
+se0 <- SummarizedExperiment(assays=SimpleList(counts=t(trainset [,-c(1,2)])),
+                            colData=colData)
+fit <- VSOLassoBag(se0, c("futime","fustat"), bootN=10,
+                   a.family="cox", bagFreq.sigMethod="PST", do.plot = T,
+                   plot.freq = "not")
+key_gene <-  fit$results$variable
+key_gene
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_VSOLassoBa_PST <- mlr(cohort)
+all_VSOLassoBa_PST$algorithm <- paste("VSOLassoBag (PST) +",all_VSOLassoBa_PST$algorithm)
+save.image("VSOLassoBag (PST).rdata")
+###################VSOLassoBag(PERT)
+#library(SummarizedExperiment)
+#library("VSOLassoBag")
+#trainset <- cohort$train_set [,c("futime","fustat",id)]
+#colData <- DataFrame(futime=trainset$futime,
+# fustat=trainset$ fustat,
+# row.names=rownames(trainset))
+#se0 <- SummarizedExperiment(assays=SimpleList(counts=t(trainset [,-c(1,2)])),
+#colData=colData)
+#fit <- VSOLassoBag(se0, c("futime","fustat"), bootN=10,
+#     a.family="cox", bagFreq.sigMethod="PERT", do.plot = T,
+#     plot.freq = "not")
+#key_gene <-  fit$results$variable
+#all_VSOLassoBa_PERT <- mlr(cohort)
+#all_VSOLassoBa_PERT$algorithm <- paste("VSOLassoBag (PERT) +",all_VSOLassoBa_PERT$algorithm)
+
+
+##########逐步回归both筛基因
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+
+
+
+
+
+
+
+
+
+
+
+
+step_fit <- step(coxph(Surv(futime,fustat)~.,data = trainset ),dirtion="both")
+key_gene <-  names(step_fit$coefficients )
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_step_both <- mlr(cohort)
+all_step_both$algorithm <- paste("Step (both) +",all_step_both$algorithm)
+save.image("Step (both).rdata")
+##########逐步回归backward筛基因
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+step_fit <- step(coxph(Surv(futime,fustat)~.,data = trainset ),dirtion="backward")
+key_gene <-  names(step_fit$coefficients )
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_step_backward <- mlr(cohort)
+all_step_backward$algorithm <- paste("Step (backward) +",all_step_backward$algorithm)
+save.image("Step (backward).rdata")
+##########逐步回归forward筛基因
+
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+step_fit <- step(coxph(Surv(futime,fustat)~.,data = trainset ),dirtion="forward")
+key_gene <-  names(step_fit$coefficients )
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_step_forward <- mlr(cohort)
+all_step_forward$algorithm <- paste("Step (forward) +",all_step_forward$algorithm)
+save.image("Step (forward).rdata")
+##########LASSO筛基因
+
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+x=as.matrix(trainset[,-c(1,2)])
+y=data.matrix(Surv(trainset$futime,trainset$fustat))
+
+fit=glmnet(x, y, family = "cox", maxit = 10000)
+cvfit=cv.glmnet(x, y, family="cox", maxit = 10000, nfolds = 10)
+coef=coef(fit, s = cvfit$lambda.min)
+index=which(coef != 0)
+actCoef=coef[index]
+key_gene=row.names(coef)[index]
+key_gene
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_LASSO <- mlr(cohort)
+all_LASSO$algorithm <- paste("LASSO +",all_LASSO$algorithm)
+save.image("LASSO.rdata")
+#######Boruta
+
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+library("Boruta")
+set.seed(123)
+
+boruta <- Boruta(x=trainset[,-c(1,2)], y=Surv(trainset$futime,trainset$fustat),doTrace = 15,pValue = 0.1)
+key_gene=names(boruta$finalDecision[boruta$finalDecision=="Confirmed"])
+key_gene
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_Boruta <- mlr(cohort)
+all_Boruta$algorithm <- paste("Boruta +",all_Boruta$algorithm)
+save.image("Boruta.rdata")
+#######Coxboost
+load("LASSO.rdata")
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+set.seed(123)
+pen <- optimCoxBoostPenalty(trainset[,'futime'],trainset[,'fustat'],as.matrix(trainset[,-c(1,2)]),
+                            trace=TRUE,start.penalty=500,parallel = T)
+cv.res <- cv.CoxBoost(trainset[,'futime'],trainset[,'fustat'],as.matrix(trainset[,-c(1,2)]),
+                      maxstepno=500,K=10,type="verweij",penalty=pen$penalty)
+
+fit <- CoxBoost(trainset[,'futime'],trainset[,'fustat'],as.matrix(trainset[,-c(1,2)]),
+                stepno=cv.res$optimal.step,penalty=pen$penalty)
+key_gene <- names(coef(fit))[!coef(fit)==0]
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_Coxboost <- mlr(cohort)
+all_Coxboost$algorithm <- paste("Coxboost +",all_Coxboost$algorithm)
+save.image("Coxboost.rdata")
+#######RSF
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+fit <- rfsrc(Surv(futime,fustat)~.,data = trainset,
+             ntree = 1000,nodesize = 5,
+             splitrule = 'logrank',
+             importance = T,
+             proximity = T,
+             forest = T,
+             seed = 123)
+key_gene<- max.subtree(fit)$topvars
+
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_RSF <- mlr(cohort)
+all_RSF$algorithm <- paste("RSF +",all_RSF$algorithm)
+save.image("RSF.rdata")
+
+
+
+
+
+
+
+
+
+
+#######panr
+library("pamr")
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+d <- list(x=t(trainset[,-c(1,2)]),survival.time=trainset$futime, censoring.status=trainset$fustat,
+          geneid=as.character(1:nrow(t(trainset[,-c(1,2)]))), genenames=rownames(t(trainset[,-c(1,2)])))
+fit <- pamr.train(d)
+key_gene <-pamr.listgenes(fit, d ,  threshold=4, genenames=T)
+key_gene <- key_gene[,2]
+
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_Pamr<- mlr(cohort)
+all_Pamr$algorithm <- paste("Pamr +",all_Pamr$algorithm)
+save.image("Pamr.rdata")
+
+##############XGBoost
+trainset <- cohort$train_set [,c("futime","fustat",id)]
+trainset<- trainset[!trainset$futime==0,]
+xgb_model <- xgboost(data = as.matrix(trainset[,-c(1,2)]), label = ifelse(trainset$fustat==1,trainset$futime,-trainset$futime), nrounds = 1000, objective = "survival:cox", eta = 0.05 )
+importance_matrix <- xgb.importance(colnames(as.matrix(trainset[,-c(1,2)])), model = xgb_model)
+xgb.plot.importance(importance_matrix, rel_to_first = TRUE, xlab = "Relative importance")
+key_gene <- importance_matrix$Feature[importance_matrix$Importance>0.02]
+trainset <- cohort$train_set [,c("futime","fustat",key_gene )]
+all_XGBoost <- mlr(cohort)
+all_XGBoost$algorithm <- paste("XGBoost +",all_XGBoost$algorithm)
+save.image("XGBoost.rdata")
+rm(list=ls())
+library(survival)
+load("XGBoost.rdata")
+#######整合
+all <- rbind(all_Coxboost,all_LASSO,all_Pamr,all_step_backward,all_step_both,all_step_forward,all_XGBoost,all_VSOLassoBa_CEP,all_VSOLassoBa_PST,all_RSF,all_Boruta)
